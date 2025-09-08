@@ -4,6 +4,33 @@ const bodyParser = require('body-parser');
 const fs = require('fs').promises;
 const path = require('path');
 const { ethers } = require('ethers');
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+
+// 配置（生产环境建议从环境变量读取）
+const SECRET_KEY = process.env.JWT_SECRET; // 密钥至少256位
+const EXPIRES_IN = process.env.EXPIRES_IN; // Token有效期（2小时）
+console.log(SECRET_KEY)
+console.log(EXPIRES_IN)
+/**
+ * 生成JWT Token
+ * @param {Object} payload - 存储在Token中的数据（避免敏感信息）
+ * @returns {string} 生成的Token字符串
+ */
+function generateToken(payload) {
+  try {
+    // 签名并生成Token
+    const token = jwt.sign(
+      payload, // 要存储的数据（如用户ID、角色）
+      SECRET_KEY, // 密钥
+      { expiresIn: EXPIRES_IN } // 过期时间
+    );
+    return token;
+  } catch (error) {
+    console.error('生成Token失败:', error);
+    throw new Error('Token生成失败');
+  }
+}
 // 初始化Express应用
 const app = express();
 const PORT = 3001;
@@ -246,31 +273,26 @@ app.delete('/api/storage', async (req, res) => {
     res.status(500).json({ error: 'Failed to clear storage' });
   }
 });
-
-// 启动服务器
-async function startServer() {
-  await initStorage();
-  app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
-  });
-}
-
 app.post('/api/verify-wallet', (req, res) => {
   const { address, message, signature, timestamp } = req.body;
-  
+  console.log(address)
   try {
     // 验证时间戳（防止重放攻击）可选
     const now = Date.now();
+    console.log(now)
     if (now - timestamp > 5 * 60 * 1000) { // 5分钟有效期 可选
       return res.json({ verified: false, error: '签名已过期' });
     }
     
     // 验证签名 必要
     const recoveredAddress = ethers.verifyMessage(message, signature);
-    
+    console.error(recoveredAddress.toLowerCase())
+    console.error(address.toLowerCase())
+    console.log(recoveredAddress.toLowerCase() === address.toLowerCase())
     if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
       // 验证成功，可以生成JWT token或session, 可选
-      const token = generateJWT(address);
+      const token = generateToken({address});
+      console.log(token)
       res.json({ 
         verified: true, 
         token,
@@ -283,5 +305,15 @@ app.post('/api/verify-wallet', (req, res) => {
     res.json({ verified: false, error: '验证过程出错' });
   }
 });
+
+// 启动服务器
+async function startServer() {
+  await initStorage();
+  app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+  });
+}
+
+
 startServer();
     

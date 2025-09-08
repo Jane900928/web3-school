@@ -424,7 +424,7 @@ export default function CourseMarketplace() {
             const signature = await newSigner.signMessage(message);
 
             // 发送到后端验证
-            const response = await fetch('/api/verify-wallet', {
+            const response = await fetch(`${API_BASE_URL}/verify-wallet`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -434,8 +434,9 @@ export default function CourseMarketplace() {
                 timestamp
               })
             });
-
+            
             const result = await response.json();
+            console.log('123',result)
             if (result.verified) {
               // 验证成功，可以进行后续操作
               console.log('钱包验证成功');
@@ -1291,7 +1292,7 @@ export default function CourseMarketplace() {
           <div className="flex items-center gap-2">
             <GraduationCap className="h-8 w-8 text-blue-400" />
             <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-              EduChain
+              web3 school
             </h1>
           </div>
 
@@ -2018,7 +2019,7 @@ export default function CourseMarketplace() {
         <div className="container mx-auto px-4 text-center text-gray-400 text-sm">
           <div className="flex items-center justify-center gap-2 mb-3">
             <GraduationCap className="h-5 w-5 text-blue-400" />
-            <span className="font-bold text-white">EduChain</span>
+            <span className="font-bold text-white">web3 school</span>
           </div>
           <p>区块链教育市场 © {new Date().getFullYear()}</p>
           <p className="mt-1">安全 · 透明 · 去中心化</p>
