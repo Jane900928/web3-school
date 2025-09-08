@@ -1,0 +1,120 @@
+{
+  "courses": [
+    {
+      "id": "1",
+      "creator": "0xA2f8f6d2fd7bCbC334E1fb95730591e3E7C4f393",
+      "title": "区块链基础知识",
+      "description": "学习区块链技术的核心概念和工作原理",
+      "price": "10.0",
+      "priceWei": "10000000000000000000",
+      "isPurchased": false,
+      "hasEnoughAllowance": false,
+      "isCreator": true
+    },
+    {
+      "id": "2",
+      "creator": "0x6019aA2f03A06423fCC4D1AB2Cae29Ab64b3485e",
+      "title": "eth合约",
+      "description": "学习以太坊合约相关知识",
+      "price": "10.0",
+      "priceWei": "10000000000000000000",
+      "isPurchased": true,
+      "hasEnoughAllowance": false,
+      "isCreator": false
+    },
+    {
+      "id": "3",
+      "creator": "0x6019aA2f03A06423fCC4D1AB2Cae29Ab64b3485e",
+      "title": "web2架构",
+      "description": "学习架构",
+      "price": "13.0",
+      "priceWei": "13000000000000000000",
+      "isPurchased": true,
+      "hasEnoughAllowance": false,
+      "isCreator": false
+    },
+    {
+      "id": "4",
+      "creator": "0x6019aA2f03A06423fCC4D1AB2Cae29Ab64b3485e",
+      "title": "Defi",
+      "description": "Defi",
+      "price": "20.0",
+      "priceWei": "20000000000000000000",
+      "isPurchased": false,
+      "hasEnoughAllowance": false,
+      "isCreator": false
+    },
+    {
+      "id": "5",
+      "creator": "0xA2f8f6d2fd7bCbC334E1fb95730591e3E7C4f393",
+      "title": "区块链基础知识1",
+      "description": "学习区块链技术的核心概念和工作原理1",
+      "price": "8.0",
+      "priceWei": "8000000000000000000",
+      "isPurchased": false,
+      "hasEnoughAllowance": false,
+      "isCreator": true
+    },
+    {
+      "id": "6",
+      "creator": "0xA2f8f6d2fd7bCbC334E1fb95730591e3E7C4f393",
+      "title": "测试node",
+      "description": "课程存储node中",
+      "price": "10.0",
+      "priceWei": "10000000000000000000",
+      "isPurchased": false,
+      "hasEnoughAllowance": false,
+      "isCreator": true
+    },
+    {
+      "id": "7",
+      "creator": "0xA2f8f6d2fd7bCbC334E1fb95730591e3E7C4f393",
+      "title": "测试node1",
+      "description": "课程存储node中1",
+      "price": "15.0",
+      "priceWei": "15000000000000000000",
+      "isPurchased": false,
+      "hasEnoughAllowance": false,
+      "isCreator": true
+    },
+    {
+      "id": "8",
+      "creator": "0xA2f8f6d2fd7bCbC334E1fb95730591e3E7C4f393",
+      "title": "test create",
+      "description": "学习区块链技术的核心概念和工作原理",
+      "price": "10.0",
+      "priceWei": "10000000000000000000",
+      "isPurchased": false,
+      "hasEnoughAllowance": false,
+      "isCreator": true
+    },
+    {
+      "id": "9",
+      "creator": "0x6019aa2f03a06423fcc4d1ab2cae29ab64b3485e",
+      "title": "区块链基础知识1111111",
+      "description": "学习区块链技术的核心概念和工作原理",
+      "price": "10",
+      "priceWei": "10000000000000000000",
+      "isPurchased": false,
+      "hasEnoughAllowance": false,
+      "isCreator": true
+    }
+  ],
+  "purchases": [
+    {
+      "id": "1757337344372",
+      "userId": "0xa2f8f6d2fd7bcbc334e1fb95730591e3e7c4f393",
+      "courseId": "9",
+      "purchasedAt": "2025-09-08T13:15:44.372Z"
+    }
+  ],
+  "courseContent": [
+    {
+      "id": "1757337164231",
+      "courseId": "9",
+      "content": "课程详细内容：\n1. 区块链基本概念\n2. 分布式账本技术\n3. 加密算法原理\n4. 智能合约基础\n5. 实际应用场景",
+      "createdAt": "2025-09-08T13:12:44.231Z",
+      "updatedAt": "2025-09-08T13:12:44.231Z"
+    }
+  ]
+}

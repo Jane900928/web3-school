@@ -1,6 +1,6 @@
 "use client";
-
-import { useState, useEffect, useCallback, useRef } from 'react';
+import './APP.css'
+import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import {
   Wallet,
@@ -15,10 +15,13 @@ import {
   ChevronDown,
   Globe,
   GraduationCap,
-  Info
+  Info,
+  Unlock,
+  ArrowLeft,
+  Lock
 } from 'lucide-react';
 
-// 课程合约ABI - 与提供的合约匹配
+// 课程合约ABI
 const COURSE_ABI = [
   {
     "inputs": [{"internalType": "address", "name": "_paymentToken", "type": "address"}],
@@ -178,7 +181,7 @@ const COURSE_ABI = [
   }
 ];
 
-// ERC20代币ABI - 用于代币授权和余额查询
+// ERC20代币ABI
 const ERC20_ABI = [
   {
     "constant": true,
@@ -206,6 +209,13 @@ const ERC20_ABI = [
     "name": "allowance",
     "outputs": [{"name": "remaining", "type": "uint256"}],
     "type": "function"
+  },
+  {
+    "constant": true,
+    "inputs": [],
+    "name": "symbol",
+    "outputs": [{"name": "", "type": "string"}],
+    "type": "function"
   }
 ];
 
@@ -221,13 +231,16 @@ const NETWORKS = {
 // 目标网络ID (Sepolia测试网)
 const TARGET_CHAIN_ID = 11155111;
 
+// API基础URL
+const API_BASE_URL = 'http://localhost:3001/api';
+
 export default function CourseMarketplace() {
   // 钱包状态
   const [provider, setProvider] = useState(null);
   const [signer, setSigner] = useState(null);
   const [address, setAddress] = useState(null);
-  const [nativeBalance, setNativeBalance] = useState("0"); // ETH/MATIC等原生代币余额
-  const [tokenBalance, setTokenBalance] = useState("0"); // 支付代币余额
+  const [nativeBalance, setNativeBalance] = useState("0");
+  const [tokenBalance, setTokenBalance] = useState("0");
   const [network, setNetwork] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -248,13 +261,22 @@ export default function CourseMarketplace() {
   const [createForm, setCreateForm] = useState({
     title: "区块链基础知识",
     description: "学习区块链技术的核心概念和工作原理",
-    price: "10"
+    price: "10",
+    content: "课程详细内容：\n1. 区块链基本概念\n2. 分布式账本技术\n3. 加密算法原理\n4. 智能合约基础\n5. 实际应用场景"
   });
   const [notification, setNotification] = useState({
     message: "",
     type: "info",
     show: false
   });
+  
+  // 课程详情状态
+  const [selectedCourse, setSelectedCourse] = useState(null);
+  const [showCourseDetail, setShowCourseDetail] = useState(false);
+  const [loadingCourseDetail, setLoadingCourseDetail] = useState(false);
+  const [checkingPurchase, setCheckingPurchase] = useState(false);
+  const [courseContent, setCourseContent] = useState("");
+  const [isCreator, setIsCreator] = useState(false);
 
   // 连接钱包
   const connectWallet = useCallback(async () => {
@@ -286,7 +308,7 @@ export default function CourseMarketplace() {
           });
 
           // 初始化合约实例 - 替换为实际合约地址
-          const contractAddress = "0x719b7553bdD6d321B61D77386c89a1c0E9fD6969"; // 替换为实际课程合约地址
+          const contractAddress = "0x719b7553bdD6d321B61D77386c89a1c0E9fD6969";
           const newContract = new ethers.Contract(contractAddress, COURSE_ABI, newSigner);
           setContract(newContract);
 
@@ -300,8 +322,14 @@ export default function CourseMarketplace() {
             const tokenBal = await tokenContract.balanceOf(accounts[0]);
             setTokenBalance(ethers.formatEther(tokenBal));
             
-            // 这里简化处理，实际项目中可能需要调用代币合约的symbol()方法
-            setTokenSymbol("KL"); // 替换为实际代币符号
+            // 获取代币符号
+            try {
+              const symbol = await tokenContract.symbol();
+              setTokenSymbol(symbol);
+            } catch (symbolErr) {
+              console.warn("无法获取代币符号，使用默认值:", symbolErr);
+              setTokenSymbol("KL");
+            }
           } catch (tokenErr) {
             console.error("获取支付代币信息失败:", tokenErr);
             showNotification("获取支付代币信息失败", "error");
@@ -455,6 +483,139 @@ export default function CourseMarketplace() {
     }
   };
 
+  // 检查用户是否购买了课程（通过API）
+  const checkUserPurchase = async (userId, courseId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/purchases/check?userId=${userId}&courseId=${courseId}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to check purchase status');
+      }
+      
+      const data = await response.json();
+      return data.purchased;
+    } catch (error) {
+      console.error('Error checking purchase status:', error);
+      // 如果API检查失败，尝试通过合约检查
+      if (contract && userId && courseId) {
+        try {
+          return await contract.checkPurchase(userId, courseId);
+        } catch (contractErr) {
+          console.error('Error checking purchase status from contract:', contractErr);
+        }
+      }
+      return false;
+    }
+  };
+
+  // 记录购买信息到API
+  const recordPurchaseToAPI = async (userId, courseId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/purchases`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId, courseId }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to record purchase');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Error recording purchase:', error);
+      return null;
+    }
+  };
+
+  // 从API获取课程详情
+  const fetchCourseDetailFromAPI = async (courseId) => {
+    try {
+      setLoadingCourseDetail(true);
+      const response = await fetch(`${API_BASE_URL}/courses/${courseId}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch course details');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching course detail:', error);
+      return null;
+    } finally {
+      setLoadingCourseDetail(false);
+    }
+  };
+
+  // 从API获取课程内容
+  const fetchCourseContentFromAPI = async (courseId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/course-content/${courseId}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch course content');
+      }
+      
+      const data = await response.json();
+      setCourseContent(data.content || "");
+      return data.content;
+    } catch (error) {
+      console.error('Error fetching course content:', error);
+      setCourseContent("");
+      return null;
+    }
+  };
+
+  // 保存课程信息到API
+  const saveCourseToAPI = async (course) => {
+    try {
+      // 转换所有BigInt类型为字符串
+    const serializedCourse = JSON.parse(JSON.stringify(course, (key, value) => 
+      typeof value === 'bigint' ? value.toString() : value
+    ));
+      const response = await fetch(`${API_BASE_URL}/courses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(serializedCourse),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to save course');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Error saving course:', error);
+      return null;
+    }
+  };
+
+  // 保存课程内容到API
+  const saveCourseContentToAPI = async (courseId, content) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/course-content`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ courseId, content }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to save course content');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('Error saving course content:', error);
+      return null;
+    }
+  };
+
   // 获取所有课程
   const fetchAllCourses = async () => {
     if (contract) {
@@ -474,15 +635,32 @@ export default function CourseMarketplace() {
             // 检查当前用户是否已购买
             const isPurchased = address ? await contract.checkPurchase(address, id) : false;
             
-            courses.push({
+            // 检查授权是否足够
+            let hasEnoughAllowance = false;
+            if (address && paymentToken && contract) {
+              const currentAllowance = await paymentToken.allowance(address, contract.target);
+              hasEnoughAllowance = currentAllowance >= price;
+            }
+            
+            const courseData = {
               id: id.toString(),
               creator: instructor,
               title,
               description,
               price: ethers.formatEther(price),
+              priceWei: price.toString(),
               isPurchased,
+              hasEnoughAllowance,
               isCreator: instructor.toLowerCase() === address?.toLowerCase()
-            });
+            };
+            
+            courses.push(courseData);
+            
+            // 检查API中是否已有该课程，没有则保存
+            const response = await fetch(`${API_BASE_URL}/courses/${courseData.id}`);
+            if (!response.ok) {
+              await saveCourseToAPI(courseData);
+            }
           } catch (courseErr) {
             console.warn(`获取课程 ${i} 失败:`, courseErr);
           }
@@ -555,11 +733,11 @@ export default function CourseMarketplace() {
 
   // 创建课程
   const handleCreateCourse = async () => {
-    if (!contract || !signer) return;
+    if (!contract || !signer || !address) return;
 
-    const { title, description, price } = createForm;
+    const { title, description, price, content } = createForm;
 
-    if (!title.trim() || !description.trim() || parseFloat(price) <= 0) {
+    if (!title.trim() || !description.trim() || parseFloat(price) <= 0 || !content.trim()) {
       showNotification("请填写所有字段并确保价格大于0", "error");
       return;
     }
@@ -578,14 +756,43 @@ export default function CourseMarketplace() {
       showNotification("正在创建课程，请等待确认...", "info");
 
       // 等待交易确认
-      await tx.wait();
+      const receipt = await tx.wait();
+      
+      // 查找CourseCreated事件以获取课程ID
+      const courseCreatedEvent = receipt.logs.find(log => 
+        log.topics[0] === ethers.id("CourseCreated(uint256,string,uint256,address)")
+      );
+      
+      if (courseCreatedEvent) {
+        const courseId = BigInt(courseCreatedEvent.topics[1]).toString();
+        
+        // 创建课程数据对象
+        const newCourse = {
+          id: courseId,
+          creator: address,
+          title,
+          description,
+          price,
+          priceWei: priceWei.toString(),
+          isPurchased: false,
+          hasEnoughAllowance: false,
+          isCreator: true
+        };
+        
+        // 保存到API
+        await saveCourseToAPI(newCourse);
+        
+        // 保存课程内容
+        await saveCourseContentToAPI(courseId, content);
+      }
 
       showNotification("课程创建成功！", "success");
       setShowCreateForm(false);
       setCreateForm({
         title: "区块链基础知识",
         description: "学习区块链技术的核心概念和工作原理",
-        price: "10"
+        price: "10",
+        content: "课程详细内容：\n1. 区块链基本概念\n2. 分布式账本技术\n3. 加密算法原理\n4. 智能合约基础\n5. 实际应用场景"
       });
 
       // 刷新课程列表
@@ -593,7 +800,6 @@ export default function CourseMarketplace() {
       fetchMyCreatedCourses();
     } catch (error) {
       console.error("创建课程失败:", error);
-      // 解析合约错误信息
       let errorMsg = "创建课程失败";
       if (error.data) {
         try {
@@ -609,36 +815,27 @@ export default function CourseMarketplace() {
     }
   };
 
-  // 授权代币
-  const approveToken = async (courseId, price) => {
-    if (!paymentToken || !address) return;
+  // 单独授权代币
+  const approveTokenOnly = async (courseId, price) => {
+    if (!paymentToken || !address || !contract) return;
 
     try {
       setApprovingToken(courseId);
       const priceWei = ethers.parseEther(price);
       
-      // 先检查当前授权额度
-      const currentAllowance = await paymentToken.allowance(address, contract.target);
-      
-      // 如果已经有足够的授权，直接购买
-      if (currentAllowance >= priceWei) {
-        setApprovingToken(null);
-        handlePurchaseCourse(courseId, price);
-        return;
-      }
-      
       // 授权足够的代币
       const tx = await paymentToken.approve(contract.target, priceWei);
-      showNotification("正在授权代币，请等待确认...", "info");
+      showNotification(`正在授权 ${price} ${tokenSymbol}，请等待确认...`, "info");
       
       // 等待授权交易确认
       await tx.wait();
       
-      showNotification("代币授权成功，即将购买课程", "success");
-      setApprovingToken(null);
+      showNotification(`成功授权 ${price} ${tokenSymbol}`, "success");
       
-      // 授权成功后继续购买流程
-      handlePurchaseCourse(courseId, price);
+      // 刷新课程列表以更新授权状态
+      fetchAllCourses();
+      
+      setApprovingToken(null);
     } catch (error) {
       console.error("代币授权失败:", error);
       showNotification("代币授权失败，请重试", "error");
@@ -657,7 +854,7 @@ export default function CourseMarketplace() {
       // 再次检查授权
       const currentAllowance = await paymentToken.allowance(address, contract.target);
       if (currentAllowance < priceWei) {
-        showNotification("代币授权不足，请重新授权", "error");
+        showNotification("代币授权不足，请先授权", "error");
         setPurchasingCourse(null);
         return;
       }
@@ -676,6 +873,9 @@ export default function CourseMarketplace() {
 
       // 等待交易确认
       await tx.wait();
+      
+      // 记录购买信息到API
+      await recordPurchaseToAPI(address, courseId.toString());
 
       showNotification("课程购买成功！", "success");
 
@@ -683,6 +883,11 @@ export default function CourseMarketplace() {
       refreshBalance();
       fetchAllCourses();
       fetchMyPurchasedCourses();
+      
+      // 如果在详情页中购买，刷新详情
+      if (showCourseDetail && selectedCourse && selectedCourse.id === courseId.toString()) {
+        handleViewCourseDetail(selectedCourse);
+      }
     } catch (error) {
       console.error("购买课程失败:", error);
       let errorMsg = "购买课程失败";
@@ -711,8 +916,53 @@ export default function CourseMarketplace() {
     return addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : "";
   };
 
+  // 查看课程详情 - 先检查购买状态
+  const handleViewCourseDetail = async (course) => {
+    if (!isConnected) {
+      showNotification("请先连接钱包", "info");
+      return;
+    }
+    
+    setCheckingPurchase(true);
+    setSelectedCourse(course);
+    
+    try {
+      // 检查用户是否购买了该课程
+      const isPurchased = await checkUserPurchase(address, course.id);
+      // 检查是否是课程创建者
+      const creator = course.creator.toLowerCase() === address.toLowerCase();
+      
+      setIsCreator(creator);
+      
+      // 如果已购买或是创建者，获取完整详情
+      if (isPurchased || creator) {
+        const detailedCourse = await fetchCourseDetailFromAPI(course.id);
+        if (detailedCourse) {
+          setSelectedCourse({...course, ...detailedCourse, isPurchased});
+        } else {
+          setSelectedCourse({...course, isPurchased});
+        }
+        
+        // 获取课程内容
+        await fetchCourseContentFromAPI(course.id);
+        
+        setShowCourseDetail(true);
+      } else {
+        // 未购买且不是创建者，仍然显示详情但不显示内容
+        setSelectedCourse({...course, isPurchased});
+        setCourseContent("");
+        setShowCourseDetail(true);
+      }
+    } catch (error) {
+      console.error("Error viewing course details:", error);
+      showNotification("查看课程详情失败", "error");
+    } finally {
+      setCheckingPurchase(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 text-white">
+    <div className="min-h-screen w-full bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 text-white m-0 p-0">
       {/* 通知组件 */}
       {notification.show && (
         <div className={`fixed top-4 right-4 px-4 py-3 rounded-lg shadow-lg z-50 flex items-center gap-2 ${
@@ -810,252 +1060,415 @@ export default function CourseMarketplace() {
       </header>
 
       <main className="container mx-auto px-4 py-8">
-        <section className="mb-12 text-center">
-          <h2 className="text-[clamp(1.8rem,5vw,3rem)] font-bold mb-4 bg-gradient-to-r from-blue-400 via-cyan-400 to-indigo-400 bg-clip-text text-transparent">
-            区块链教育市场
-          </h2>
-          <p className="text-gray-300 max-w-2xl mx-auto text-lg">
-            在区块链上创建、购买和销售教育内容。安全、透明、去中心化的学习体验。
-          </p>
-        </section>
+        {/* 如果显示课程详情，则展示详情页面 */}
+        {showCourseDetail ? (
+          <section>
+            <button
+              onClick={() => setShowCourseDetail(false)}
+              className="flex items-center gap-2 text-blue-400 hover:text-blue-300 mb-6 transition-colors"
+            >
+              <ArrowLeft className="h-5 w-5" />
+              <span>返回课程列表</span>
+            </button>
 
-        {isConnected ? (
+            {checkingPurchase ? (
+              <div className="flex justify-center items-center py-20">
+                <Loader2 className="h-10 w-10 animate-spin text-blue-400" />
+              </div>
+            ) : selectedCourse ? (
+              <div className="bg-white/5 backdrop-blur-lg rounded-2xl p-8 border border-white/10">
+                <div className="mb-6">
+                  <p className="text-gray-400 text-sm mb-2">讲师: {formatAddress(selectedCourse.creator)}</p>
+                  <h2 className="text-3xl font-bold">{selectedCourse.title}</h2>
+                  <div className="mt-4 inline-block bg-blue-500/20 text-blue-300 px-4 py-1.5 rounded-full text-sm font-medium">
+                    {selectedCourse.price} {tokenSymbol}
+                  </div>
+                  
+                  {selectedCourse.isPurchased && (
+                    <div className="mt-4 inline-block bg-green-500/20 text-green-300 px-4 py-1.5 rounded-full text-sm font-medium ml-2">
+                      已购买
+                    </div>
+                  )}
+                </div>
+
+                <div className="mb-8">
+                  <h3 className="text-xl font-bold mb-3">课程简介</h3>
+                  <p className="text-gray-300 leading-relaxed">{selectedCourse.description}</p>
+                </div>
+
+                <div className="mb-8">
+                  <h3 className="text-xl font-bold mb-3">课程内容</h3>
+                  {selectedCourse.isPurchased || isCreator ? (
+                    courseContent ? (
+                      <div className="bg-white/5 p-6 rounded-xl border border-white/10 text-gray-200 leading-relaxed whitespace-pre-line">
+                        {courseContent}
+                      </div>
+                    ) : (
+                      <div className="bg-white/5 p-6 rounded-xl border border-white/10 text-gray-400">
+                        课程内容尚未添加
+                      </div>
+                    )
+                  ) : (
+                    <div className="bg-white/5 p-8 rounded-xl border border-white/10 text-center">
+                      <Lock className="h-12 w-12 mx-auto text-gray-500 mb-4" />
+                      <p className="text-gray-400">购买课程后即可查看完整内容</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-4">
+                  {/* 只有未购买且不是创建者才能看到授权和购买按钮 */}
+                  {!selectedCourse.isPurchased && !isCreator && (
+                    <>
+                      {/* 独立的授权按钮 */}
+                      <button
+                        onClick={() => {
+                          approveTokenOnly(parseInt(selectedCourse.id), selectedCourse.price)
+                            .then(() => fetchCourseDetailFromAPI(selectedCourse.id))
+                            .then(detail => detail && setSelectedCourse({...selectedCourse, ...detail}));
+                        }}
+                        disabled={approvingToken === parseInt(selectedCourse.id) || purchasingCourse === parseInt(selectedCourse.id)}
+                        className={`px-6 py-3 rounded-lg font-medium transition-all duration-300 flex items-center gap-2 ${
+                          approvingToken === parseInt(selectedCourse.id)
+                            ? "bg-gray-600 text-gray-300 cursor-not-allowed"
+                            : selectedCourse.hasEnoughAllowance
+                              ? "bg-purple-600/70 hover:bg-purple-600 text-white"
+                              : "bg-purple-600 hover:bg-purple-700 text-white"
+                        }`}
+                      >
+                        {approvingToken === parseInt(selectedCourse.id) ? (
+                          <Loader2 className="h-5 h-5 animate-spin" />
+                        ) : (
+                          <Unlock className="h-5 h-5" />
+                        )}
+                        <span>授权</span>
+                      </button>
+                      
+                      {/* 购买按钮 */}
+                      <button
+                        onClick={() => {
+                          handlePurchaseCourse(parseInt(selectedCourse.id), selectedCourse.price);
+                        }}
+                        disabled={
+                          approvingToken === parseInt(selectedCourse.id) ||
+                          purchasingCourse === parseInt(selectedCourse.id) || 
+                          !selectedCourse.hasEnoughAllowance
+                        }
+                        className={`px-6 py-3 rounded-lg font-medium transition-all duration-300 flex items-center gap-2 ${
+                          (approvingToken === parseInt(selectedCourse.id) || purchasingCourse === parseInt(selectedCourse.id)) ||
+                          !selectedCourse.hasEnoughAllowance
+                            ? "bg-gray-600 text-gray-300 cursor-not-allowed"
+                            : "bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 text-white"
+                        }`}
+                      >
+                        {purchasingCourse === parseInt(selectedCourse.id) ? (
+                          <Loader2 className="h-5 h-5 animate-spin" />
+                        ) : (
+                          <ShoppingCart className="h-5 h-5" />
+                        )}
+                        
+                        <span>购买课程</span>
+                        {!selectedCourse.hasEnoughAllowance && (
+                          <span className="ml-1">需先授权</span>
+                        )}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-20">
+                <Info className="h-12 w-12 mx-auto text-gray-600 mb-3" />
+                <p className="text-gray-400">无法加载课程详情</p>
+                <button
+                  onClick={() => setShowCourseDetail(false)}
+                  className="mt-4 text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  返回课程列表
+                </button>
+              </div>
+            )}
+          </section>
+        ) : (
+          // 课程列表页面
           <>
-            {/* 操作按钮 */}
-            <div className="flex justify-center mb-10 gap-4">
-              <button
-                onClick={() => setShowCreateForm(!showCreateForm)}
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-medium py-3 px-8 rounded-full transition-all duration-300 transform hover:scale-105 flex items-center gap-2"
-              >
-                <PlusCircle className="h-5 w-5" />
-                <span>创建课程</span>
-              </button>
+            <section className="mb-12 text-center">
+              <h2 className="text-[clamp(1.8rem,5vw,3rem)] font-bold mb-4 bg-gradient-to-r from-blue-400 via-cyan-400 to-indigo-400 bg-clip-text text-transparent">
+                区块链教育市场
+              </h2>
+              <p className="text-gray-300 max-w-2xl mx-auto text-lg">
+                在区块链上创建、购买和销售教育内容。安全、透明、去中心化的学习体验。
+              </p>
+            </section>
 
-              <button
-                onClick={() => {
-                  setShowHistory(true);
-                  fetchMyCreatedCourses();
-                  fetchMyPurchasedCourses();
-                }}
-                className="bg-white/10 hover:bg-white/20 text-white font-medium py-3 px-8 rounded-full transition-all duration-300 flex items-center gap-2"
-              >
-                <History className="h-5 w-5" />
-                <span>我的课程</span>
-              </button>
-            </div>
-
-            {/* 创建课程表单 */}
-            {showCreateForm && (
-              <div className="max-w-md mx-auto mb-12 bg-white/5 backdrop-blur-lg rounded-2xl p-6 border border-white/10 shadow-xl transform transition-all duration-300 hover:shadow-blue-500/10">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-xl font-bold">创建新课程</h3>
+            {isConnected ? (
+              <>
+                {/* 操作按钮 */}
+                <div className="flex justify-center mb-10 gap-4">
                   <button
-                    onClick={() => setShowCreateForm(false)}
-                    className="p-1.5 hover:bg-white/10 rounded-full transition-colors"
+                    onClick={() => setShowCreateForm(!showCreateForm)}
+                    className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-medium py-3 px-8 rounded-full transition-all duration-300 transform hover:scale-105 flex items-center gap-2"
                   >
-                    <X className="h-5 w-5" />
+                    <PlusCircle className="h-5 w-5" />
+                    <span>创建课程</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setShowHistory(true);
+                      fetchMyCreatedCourses();
+                      fetchMyPurchasedCourses();
+                    }}
+                    className="bg-white/10 hover:bg-white/20 text-white font-medium py-3 px-8 rounded-full transition-all duration-300 flex items-center gap-2"
+                  >
+                    <History className="h-5 w-5" />
+                    <span>我的课程</span>
                   </button>
                 </div>
 
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-1">课程标题</label>
-                    <input
-                      type="text"
-                      name="title"
-                      value={createForm.title}
-                      onChange={handleInputChange}
-                      className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white"
-                    />
-                  </div>
+                {/* 创建课程表单 */}
+                {showCreateForm && (
+                  <div className="max-w-2xl mx-auto mb-12 bg-white/5 backdrop-blur-lg rounded-2xl p-6 border border-white/10 shadow-xl transform transition-all duration-300 hover:shadow-blue-500/10">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-xl font-bold">创建新课程</h3>
+                      <button
+                        onClick={() => setShowCreateForm(false)}
+                        className="p-1.5 hover:bg-white/10 rounded-full transition-colors"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-1">课程描述</label>
-                    <textarea
-                      name="description"
-                      value={createForm.description}
-                      onChange={handleInputChange}
-                      className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white h-24 resize-none"
-                    ></textarea>
-                  </div>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-1">课程标题</label>
+                        <input
+                          type="text"
+                          name="title"
+                          value={createForm.title}
+                          onChange={handleInputChange}
+                          className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white"
+                        />
+                      </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-1">
-                      价格 ({tokenSymbol})
-                    </label>
-                    <input
-                      type="number"
-                      name="price"
-                      value={createForm.price}
-                      onChange={handleInputChange}
-                      min="0.001"
-                      step="0.001"
-                      className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white"
-                    />
-                  </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-1">课程简介</label>
+                        <textarea
+                          name="description"
+                          value={createForm.description}
+                          onChange={handleInputChange}
+                          className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white h-24 resize-none"
+                          placeholder="简要描述课程内容和学习收获"
+                        ></textarea>
+                      </div>
 
+                      <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-1">
+                          价格 ({tokenSymbol})
+                        </label>
+                        <input
+                          type="number"
+                          name="price"
+                          value={createForm.price}
+                          onChange={handleInputChange}
+                          min="0.001"
+                          step="0.001"
+                          className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-1">课程详细内容</label>
+                        <textarea
+                          name="content"
+                          value={createForm.content}
+                          onChange={handleInputChange}
+                          className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white h-32 resize-none"
+                          placeholder="输入课程的详细内容，学员购买后可见"
+                        ></textarea>
+                      </div>
+
+                      <button
+                        onClick={handleCreateCourse}
+                        disabled={creatingCourse}
+                        className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white font-medium py-3 rounded-lg transition-all duration-300 flex items-center justify-center gap-2"
+                      >
+                        {creatingCourse ? (
+                          <>
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                            <span>创建中...</span>
+                          </>
+                        ) : (
+                          <>
+                            <BookOpen className="h-5 w-5" />
+                            <span>发布课程</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 课程列表 */}
+                <section>
+                  <h3 className="text-2xl font-bold mb-6 flex items-center gap-2">
+                    <BookOpen className="h-6 w-6 text-blue-400" />
+                    <span>可用课程</span>
+                  </h3>
+
+                  {allCourses.length === 0 ? (
+                    <div className="text-center py-16 bg-white/5 backdrop-blur-sm rounded-2xl border border-white/10">
+                      <BookOpen className="h-16 w-16 mx-auto text-gray-600 mb-4" />
+                      <p className="text-gray-400 text-lg">暂无可用课程</p>
+                      <p className="text-gray-500 mt-2">成为第一个创建课程的人吧！</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {allCourses.map((course) => (
+                        // 将课程卡片改为可点击
+                        <div
+                          key={course.id}
+                          className="bg-white/5 backdrop-blur-lg rounded-2xl p-6 border border-white/10 hover:border-blue-500/30 transition-all duration-300 transform hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-500/5 cursor-pointer"
+                          onClick={() => handleViewCourseDetail(course)}
+                        >
+                          <div className="mb-4">
+                            <p className="text-gray-400 text-sm">讲师: {formatAddress(course.creator)}</p>
+                            <h4 className="text-xl font-bold mt-1 mb-2">{course.title}</h4>
+                            <p className="text-gray-300 text-sm line-clamp-3">{course.description}</p>
+                          </div>
+
+                          <div className="flex justify-between items-center mt-4">
+                            <div>
+                              <p className="text-2xl font-bold text-white">{course.price} {tokenSymbol}</p>
+                            </div>
+
+                            <div className="flex gap-2">
+                              {/* 独立的授权按钮 - 阻止事件冒泡 */}
+                              {!course.isPurchased && !course.isCreator && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation(); // 防止触发卡片点击事件
+                                    approveTokenOnly(parseInt(course.id), course.price);
+                                  }}
+                                  disabled={approvingToken === parseInt(course.id) || purchasingCourse === parseInt(course.id)}
+                                  className={`px-3 py-2 rounded-lg font-medium transition-all duration-300 flex items-center gap-1.5 ${
+                                    approvingToken === parseInt(course.id)
+                                      ? "bg-gray-600 text-gray-300 cursor-not-allowed"
+                                      : course.hasEnoughAllowance
+                                        ? "bg-purple-600/70 hover:bg-purple-600 text-white"
+                                        : "bg-purple-600 hover:bg-purple-700 text-white"
+                                  }`}
+                                >
+                                  {approvingToken === parseInt(course.id) ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Unlock className="h-4 w-4" />
+                                  )}
+                                  <span>授权</span>
+                                </button>
+                              )}
+                              
+                              {/* 购买按钮 - 阻止事件冒泡 */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation(); // 防止触发卡片点击事件
+                                  handlePurchaseCourse(parseInt(course.id), course.price);
+                                }}
+                                disabled={
+                                  approvingToken === parseInt(course.id) ||
+                                  purchasingCourse === parseInt(course.id) || 
+                                  course.isPurchased || 
+                                  course.isCreator ||
+                                  !course.hasEnoughAllowance
+                                }
+                                className={`px-3 py-2 rounded-lg font-medium transition-all duration-300 flex items-center gap-1.5 ${
+                                  (approvingToken === parseInt(course.id) || purchasingCourse === parseInt(course.id)) ||
+                                  !course.hasEnoughAllowance
+                                    ? "bg-gray-600 text-gray-300 cursor-not-allowed"
+                                    : course.isPurchased
+                                      ? "bg-green-500/20 text-green-300 cursor-not-allowed"
+                                      : course.isCreator
+                                        ? "bg-gray-600 text-gray-300 cursor-not-allowed"
+                                        : "bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 text-white"
+                                }`}
+                              >
+                                {purchasingCourse === parseInt(course.id) ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : course.isPurchased ? (
+                                  <CheckCircle className="h-4 w-4" />
+                                ) : (
+                                  <ShoppingCart className="h-4 w-4" />
+                                )}
+                                
+                                {course.isPurchased ? <span>已购买</span> : <span>购买</span>}
+                                {!course.hasEnoughAllowance && !course.isPurchased && !course.isCreator && (
+                                  <span className="text-xs ml-1">需先授权</span>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </>
+            ) : (
+              // 未连接钱包状态
+              <div className="flex flex-col items-center justify-center min-h-[70vh]">
+                <div className="bg-white/5 backdrop-blur-lg rounded-3xl p-10 border border-white/10 max-w-md w-full text-center mb-8">
+                  <Wallet className="h-16 w-16 mx-auto text-blue-400 mb-6" />
+                  <h3 className="text-2xl font-bold mb-3">连接钱包开始使用</h3>
+                  <p className="text-gray-300 mb-6">
+                    连接您的MetaMask钱包，开始在区块链上创建和购买课程
+                  </p>
                   <button
-                    onClick={handleCreateCourse}
-                    disabled={creatingCourse}
-                    className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white font-medium py-3 rounded-lg transition-all duration-300 flex items-center justify-center gap-2"
+                    onClick={connectWallet}
+                    disabled={isConnecting}
+                    className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white font-medium py-3 px-6 rounded-full transition-all duration-300 transform hover:scale-105 flex items-center justify-center gap-2"
                   >
-                    {creatingCourse ? (
+                    {isConnecting ? (
                       <>
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                        <span>创建中...</span>
+                        <Loader2 className="h-5 h-5 animate-spin" />
+                        <span>连接中...</span>
                       </>
                     ) : (
                       <>
-                        <BookOpen className="h-5 w-5" />
-                        <span>发布课程</span>
+                        <Wallet className="h-5 h-5" />
+                        <span>连接MetaMask</span>
                       </>
                     )}
                   </button>
                 </div>
+
+                <div className="flex gap-6 max-w-2xl">
+                  <div className="flex-1 text-center">
+                    <div className="bg-white/5 p-4 rounded-full inline-block mb-3">
+                      <PlusCircle className="h-8 w-8 text-green-400" />
+                    </div>
+                    <h4 className="font-bold mb-2">创建课程</h4>
+                    <p className="text-gray-400 text-sm">分享您的知识，创建区块链验证的课程</p>
+                  </div>
+
+                  <div className="flex-1 text-center">
+                    <div className="bg-white/5 p-4 rounded-full inline-block mb-3">
+                      <ShoppingCart className="h-8 w-8 text-blue-400" />
+                    </div>
+                    <h4 className="font-bold mb-2">购买课程</h4>
+                    <p className="text-gray-400 text-sm">直接从创作者那里购买教育内容</p>
+                  </div>
+
+                  <div className="flex-1 text-center">
+                    <div className="bg-white/5 p-4 rounded-full inline-block mb-3">
+                      <BookOpen className="h-8 w-8 text-purple-400" />
+                    </div>
+                    <h4 className="font-bold mb-2">随时随地学习</h4>
+                    <p className="text-gray-400 text-sm">访问您购买的课程，不受时间和地点限制</p>
+                  </div>
+                </div>
               </div>
             )}
-
-            {/* 课程列表 */}
-            <section>
-              <h3 className="text-2xl font-bold mb-6 flex items-center gap-2">
-                <BookOpen className="h-6 w-6 text-blue-400" />
-                <span>可用课程</span>
-              </h3>
-
-              {allCourses.length === 0 ? (
-                <div className="text-center py-16 bg-white/5 backdrop-blur-sm rounded-2xl border border-white/10">
-                  <BookOpen className="h-16 w-16 mx-auto text-gray-600 mb-4" />
-                  <p className="text-gray-400 text-lg">暂无可用课程</p>
-                  <p className="text-gray-500 mt-2">成为第一个创建课程的人吧！</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {allCourses.map((course) => (
-                    <div
-                      key={course.id}
-                      className="bg-white/5 backdrop-blur-lg rounded-2xl p-6 border border-white/10 hover:border-blue-500/30 transition-all duration-300 transform hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-500/5"
-                    >
-                      <div className="mb-4">
-                        <p className="text-gray-400 text-sm">讲师: {formatAddress(course.creator)}</p>
-                        <h4 className="text-xl font-bold mt-1 mb-2">{course.title}</h4>
-                        <p className="text-gray-300 text-sm line-clamp-3">{course.description}</p>
-                      </div>
-
-                      <div className="flex justify-between items-center mt-4">
-                        <div>
-                          <p className="text-2xl font-bold text-white">{course.price} {tokenSymbol}</p>
-                        </div>
-
-                        <button
-                          onClick={() => {
-                            if (course.isPurchased) return;
-                            if (course.isCreator) return;
-                            // 先进行代币授权，再购买
-                            approveToken(parseInt(course.id), course.price);
-                          }}
-                          disabled={
-                            approvingToken === parseInt(course.id) ||
-                            purchasingCourse === parseInt(course.id) || 
-                            course.isPurchased || 
-                            course.isCreator
-                          }
-                          className={`px-4 py-2 rounded-lg font-medium transition-all duration-300 flex items-center gap-1.5 ${
-                            approvingToken === parseInt(course.id) || purchasingCourse === parseInt(course.id)
-                              ? "bg-gray-600 text-gray-300 cursor-not-allowed"
-                              : course.isPurchased
-                                ? "bg-green-500/20 text-green-300 cursor-not-allowed"
-                                : course.isCreator
-                                  ? "bg-gray-600 text-gray-300 cursor-not-allowed"
-                                  : "bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white hover:shadow-lg hover:shadow-blue-500/20"
-                          }`}
-                        >
-                          {approvingToken === parseInt(course.id) ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              <span>授权中</span>
-                            </>
-                          ) : purchasingCourse === parseInt(course.id) ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              <span>购买中</span>
-                            </>
-                          ) : course.isPurchased ? (
-                            <>
-                              <CheckCircle className="h-4 w-4" />
-                              <span>已购买</span>
-                            </>
-                          ) : course.isCreator ? (
-                            <>
-                              <BookOpen className="h-4 w-4" />
-                              <span>我的课程</span>
-                            </>
-                          ) : (
-                            <>
-                              <ShoppingCart className="h-4 w-4" />
-                              <span>购买</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
           </>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-20">
-            <div className="bg-white/5 backdrop-blur-lg rounded-3xl p-10 border border-white/10 max-w-md w-full text-center mb-8">
-              <Wallet className="h-16 w-16 mx-auto text-blue-400 mb-6" />
-              <h3 className="text-2xl font-bold mb-3">连接钱包开始使用</h3>
-              <p className="text-gray-300 mb-6">
-                连接您的MetaMask钱包，开始在区块链上创建和购买课程
-              </p>
-              <button
-                onClick={connectWallet}
-                disabled={isConnecting}
-                className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white font-medium py-3 px-6 rounded-full transition-all duration-300 transform hover:scale-105 flex items-center justify-center gap-2"
-              >
-                {isConnecting ? (
-                  <>
-                    <Loader2 className="h-5 h-5 animate-spin" />
-                    <span>连接中...</span>
-                  </>
-                ) : (
-                  <>
-                    <Wallet className="h-5 h-5" />
-                    <span>连接MetaMask</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            <div className="flex gap-6 max-w-2xl">
-              <div className="flex-1 text-center">
-                <div className="bg-white/5 p-4 rounded-full inline-block mb-3">
-                  <PlusCircle className="h-8 w-8 text-green-400" />
-                </div>
-                <h4 className="font-bold mb-2">创建课程</h4>
-                <p className="text-gray-400 text-sm">分享您的知识，创建区块链验证的课程</p>
-              </div>
-
-              <div className="flex-1 text-center">
-                <div className="bg-white/5 p-4 rounded-full inline-block mb-3">
-                  <ShoppingCart className="h-8 w-8 text-blue-400" />
-                </div>
-                <h4 className="font-bold mb-2">购买课程</h4>
-                <p className="text-gray-400 text-sm">直接从创作者那里购买教育内容</p>
-              </div>
-
-              <div className="flex-1 text-center">
-                <div className="bg-white/5 p-4 rounded-full inline-block mb-3">
-                  <BookOpen className="h-8 w-8 text-purple-400" />
-                </div>
-                <h4 className="font-bold mb-2">随时随地学习</h4>
-                <p className="text-gray-400 text-sm">访问您购买的课程，不受时间和地点限制</p>
-              </div>
-            </div>
-          </div>
         )}
       </main>
 
@@ -1113,7 +1526,8 @@ export default function CourseMarketplace() {
                     {myCreatedCourses.map((course) => (
                       <div
                         key={course.id}
-                        className="bg-white/5 rounded-xl p-4 border border-white/10 hover:border-blue-500/30 transition-all"
+                        className="bg-white/5 rounded-xl p-4 border border-white/10 hover:border-blue-500/30 transition-all cursor-pointer"
+                        onClick={() => handleViewCourseDetail(course)}
                       >
                         <div className="flex justify-between">
                           <div>
@@ -1139,7 +1553,8 @@ export default function CourseMarketplace() {
                     {myPurchasedCourses.map((course) => (
                       <div
                         key={course.id}
-                        className="bg-white/5 rounded-xl p-4 border border-white/10 hover:border-blue-500/30 transition-all"
+                        className="bg-white/5 rounded-xl p-4 border border-white/10 hover:border-blue-500/30 transition-all cursor-pointer"
+                        onClick={() => handleViewCourseDetail(course)}
                       >
                         <div className="flex justify-between">
                           <div>
@@ -1162,7 +1577,7 @@ export default function CourseMarketplace() {
       )}
 
       {/* 页脚 */}
-      <footer className="mt-20 bg-white/5 backdrop-blur-lg border-t border-white/10 py-8">
+      <footer className="mt-auto bg-white/5 backdrop-blur-lg border-t border-white/10 py-8">
         <div className="container mx-auto px-4 text-center text-gray-400 text-sm">
           <div className="flex items-center justify-center gap-2 mb-3">
             <GraduationCap className="h-5 w-5 text-blue-400" />
@@ -1175,3 +1590,4 @@ export default function CourseMarketplace() {
     </div>
   );
 }
+    
