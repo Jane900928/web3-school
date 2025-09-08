@@ -1,5 +1,5 @@
 "use client";
-
+import './APP.css'
 import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import {
@@ -413,10 +413,36 @@ export default function CourseMarketplace() {
         const accounts = await newProvider.send("eth_requestAccounts", []);
         if (accounts.length > 0) {
           setAddress(accounts[0]);
-
+          const address = accounts[0];
           // 获取签名者
           const newSigner = await newProvider.getSigner();
           setSigner(newSigner);
+          // 创建要签名的消息（通常包含时间戳防重放）
+          const timestamp = Date.now();
+          const message = `验证钱包地址: ${address}\n时间戳: ${timestamp}`;
+          try {
+            const signature = await newSigner.signMessage(message);
+
+            // 发送到后端验证
+            const response = await fetch('/api/verify-wallet', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                address,
+                message,
+                signature,
+                timestamp
+              })
+            });
+
+            const result = await response.json();
+            if (result.verified) {
+              // 验证成功，可以进行后续操作
+              console.log('钱包验证成功');
+            }
+          } catch (error) {
+            console.error('签名失败:', error);
+          }
 
           // 获取原生代币余额
           const newBalance = await newProvider.getBalance(accounts[0]);
@@ -509,21 +535,24 @@ export default function CourseMarketplace() {
   const switchNetwork = async () => {
     if (window.ethereum) {
       try {
+        // 关键修复：将十进制链ID转换为十六进制字符串
+        const chainIdHex = `0x${TARGET_CHAIN_ID.toString(16)}`;
+
         await window.ethereum.request({
           method: "wallet_switchEthereumChain",
-          params: [{ chainId: ethers.hexlify(TARGET_CHAIN_ID) }],
+          params: [{ chainId: chainIdHex }], // 使用十六进制链ID
         });
         showNotification(`已切换到 ${NETWORKS[TARGET_CHAIN_ID].name}`, "success");
       } catch (error) {
         console.error("切换网络失败:", error);
         if (error.code === 4902) {
-          // 尝试添加Sepolia测试网
+          // 尝试添加Sepolia测试网（同样使用十六进制链ID）
           try {
             await window.ethereum.request({
               method: "wallet_addEthereumChain",
               params: [
                 {
-                  chainId: ethers.hexlify(TARGET_CHAIN_ID),
+                  chainId: chainIdHex, // 十六进制
                   chainName: "Sepolia Testnet",
                   rpcUrls: ["https://sepolia.infura.io/v3/"],
                   blockExplorerUrls: ["https://sepolia.etherscan.io/"],

@@ -3,7 +3,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const fs = require('fs').promises;
 const path = require('path');
-
+const { ethers } = require('ethers');
 // 初始化Express应用
 const app = express();
 const PORT = 3001;
@@ -255,5 +255,33 @@ async function startServer() {
   });
 }
 
+app.post('/api/verify-wallet', (req, res) => {
+  const { address, message, signature, timestamp } = req.body;
+  
+  try {
+    // 验证时间戳（防止重放攻击）可选
+    const now = Date.now();
+    if (now - timestamp > 5 * 60 * 1000) { // 5分钟有效期 可选
+      return res.json({ verified: false, error: '签名已过期' });
+    }
+    
+    // 验证签名 必要
+    const recoveredAddress = ethers.verifyMessage(message, signature);
+    
+    if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
+      // 验证成功，可以生成JWT token或session, 可选
+      const token = generateJWT(address);
+      res.json({ 
+        verified: true, 
+        token,
+        address: recoveredAddress 
+      });
+    } else {
+      res.json({ verified: false, error: '签名验证失败' });
+    }
+  } catch (error) {
+    res.json({ verified: false, error: '验证过程出错' });
+  }
+});
 startServer();
     
